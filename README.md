@@ -1,11 +1,11 @@
 # Duo-MCP Server
 
-Model Context Protocol (MCP) Server for **Duo-Agent**.
+Model Context Protocol (MCP) Server for [**Duo-Agent**](https://github.com/mquand/Duo-Agent).
 
-Expose Duo-Agent's autonomous multi-agent orchestrator (Architect -> Builder -> Auditor) and rapid CodeGraph engine to **Claude Desktop**, **Claude Code**, **Claude Extension (VS Code / Cursor / Windsurf)**, and **Antigravity**.
+Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent orchestrator (Architect -> Builder -> Auditor) and rapid CodeGraph engine to **Claude Desktop**, **Claude Code**, **Claude Extension (VS Code / Cursor / Windsurf)**, and **Antigravity**.
 
 > [!NOTE]
-> Dự án này hoàn toàn tách biệt khỏi `duo-agent` CLI. Người dùng thích dòng lệnh vẫn sử dụng `duo-agent` qua terminal bình thường, trong khi `duo-mcp` phục vụ các IDE / Extension cần giao tiếp qua chuẩn MCP.
+> Dự án này đóng vai trò MCP Server kết nối với CLI [**Duo-Agent**](https://github.com/mquand/Duo-Agent). Người dùng thích dòng lệnh vẫn sử dụng `duo-agent` qua terminal bình thường, trong khi `duo-mcp` phục vụ các IDE / Extension cần giao tiếp qua chuẩn MCP.
 
 ---
 
@@ -149,3 +149,10 @@ npm run build
 # Chạy unit tests
 npm test
 ```
+
+---
+
+## 6. Liên Kết Liên Quan
+
+* **Core Engine**: [Duo-Agent Repository](https://github.com/mquand/Duo-Agent) - Autonomous multi-agent orchestrator & rapid CodeGraph CLI engine.
+
