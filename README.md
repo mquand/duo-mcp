@@ -13,6 +13,7 @@ Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent
 
 | Tool Name | Mô tả | Tham số |
 | :--- | :--- | :--- |
+| `duo_agy_delegate` | **[Mới - Không cần API Key]** Ủy quyền trực tiếp cho Antigravity CLI (`agy`) trên máy: Tận dụng Gemini/Claude có sẵn để phân tích codebase nặng, đọc context lớn, tóm tắt log, tra cứu web hoặc review chéo giải pháp. | `prompt` (bắt buộc), `model`, `effort`, `directory` |
 | `duo_inspect_repo` | **[Tất cả trong 1]** Khảo sát & Bảo vệ mã nguồn: Tự động quét khung CodeGraph AST (<10ms), nhận diện Stack/Lệnh test/Quy ước, và tạo Git Safety Checkpoint bảo vệ code chỉ trong 1 lệnh duy nhất. | `directory`, `maxFiles`, `checkpoint` (mặc định: true) |
 | `duo_execute_plan` | **[Tất cả trong 1]** Kích hoạt thực thi kế hoạch: Tự động tạo Git Checkpoint an toàn, nhận diện stack/test, nạp plan, chuyển bước sang `IN_PROGRESS` và trả về toàn bộ chỉ dẫn cho Antigravity code ngay. | `directory`, `stepId`, `autoCheckpoint` (mặc định: true) |
 | `duo_handoff_plan` | Claude (Planner) gửi bản kế hoạch chi tiết cho Antigravity (Builder) thực thi. Tự động sinh file `PLAN.md` và `.duo/handoff.json`. | `title` (bắt buộc), `task`, `summary`, `steps` (danh sách bước, files, instruction, verification), `conventions`, `directory`, `planner`, `executor` |
@@ -115,6 +116,11 @@ Trong Antigravity, thêm cấu hình vào file `.agents/mcp_config.json` (ở wo
 ## 4. Cách Sử Dụng Trong Khung Chat
 
 Khi đã bật MCP, bạn có thể ra lệnh trực tiếp trong Claude / Antigravity:
+
+* **Ủy quyền cho Antigravity CLI (`agy`) xử lý context lớn hoặc review chéo (Không cần API key)**:
+  > *"Dùng tool duo_agy_delegate để đọc file log lớn và tóm tắt các lỗi xuất hàng gần nhất."*
+  >
+  > *"Dùng duo_agy_delegate với model 'claude-opus-4-6-thinking' để review chéo kiến trúc và tìm edge cases trong code vừa viết."*
 
 * **Chạy task phức tạp bằng đa tác tử**:
   > *"Dùng tool duo_orchestrate để bổ sung tính năng xuất file Excel cho đơn hàng trong thư mục hiện tại."*
