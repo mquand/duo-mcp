@@ -12,7 +12,7 @@ export function createDuoMcpServer(): McpServer {
   // 1. duo_delegate (Core Execution Engine: Single Task or Parallel Batch with Conflict Queue)
   server.tool(
     'duo_delegate',
-    'ỦY QUYỀN THỰC THI CHO AGY CLI (Google Gemini / Claude không cần API key). Hỗ trợ chạy đơn lẻ (single task) hoặc đa luồng (nhiều tasks). Tự động nhận diện xung đột: nếu khác repo -> chạy song song (Parallel 2-3x); nếu cùng repo hoặc trùng file -> tự động xếp hàng đợi (Queue) an toàn tuyệt đối. Tự động stream log, kiểm tra compile lỗi và cắt tỉa output bảo vệ context.',
+    'ỦY QUYỀN THỰC THI CHO AGY CLI (Google Gemini / Claude không cần API key). [QUY TẮC TỐI ƯU TỐC ĐỘ]: LUÔN LUÔN ưu tiên phân rã bài toán thành nhiều subtasks song song qua mảng "tasks" (ví dụ: 1 task Backend pos-api, 1 task Frontend pos-ssr,...) thay vì chạy tuần tự một lèo 10-15 phút. Tự động nhận diện xung đột: nếu khác repo -> chạy song song (Parallel 2-3x); nếu cùng repo hoặc trùng file -> tự động xếp hàng đợi (Queue) an toàn tuyệt đối. Tự động stream log, kiểm tra compile lỗi và cắt tỉa output.',
     {
       prompt: z.string().optional().describe('Chỉ dẫn thực thi cho task đơn (hoặc dùng tasks nếu muốn chạy đa luồng).'),
       tasks: z
