@@ -554,7 +554,7 @@ export function createDuoMcpServer(): McpServer {
   // 13. duo_agy_delegate
   server.tool(
     'duo_agy_delegate',
-    'ỦY QUYỀN TRỰC TIẾP CHO AGY CLI (Google Gemini / Claude không cần API Key). Dành cho Claude Code ủy quyền tác vụ nặng cho Antigravity CLI (agy) cài sẵn trên máy: đọc context lớn, phân tích repo sâu, review chéo giải pháp, hoặc tra cứu web.',
+    'ỦY QUYỀN TRỰC TIẾP CHO AGY CLI (Google Gemini / Claude không cần API Key). Dành cho Claude Code ủy quyền tác vụ nặng cho Antigravity CLI (agy) cài sẵn trên máy: đọc context lớn, phân tích repo sâu, review chéo giải pháp, hoặc tra cứu web. Tự động stream log ra ~/.duo/live.log, kiểm tra compile lỗi và cắt tỉa output bảo vệ token.',
     {
       prompt: z.string().describe('Instructions or questions to delegate to agy CLI (e.g. review plan, analyze large files, summarize logs).'),
       model: z
@@ -568,26 +568,31 @@ export function createDuoMcpServer(): McpServer {
         ])
         .optional()
         .default('gemini-3.8-flash-medium')
-        .describe('Model to execute in agy CLI (default: gemini-3.8-flash-medium).'),
+        .describe('Model to execute in agy CLI (default: gemini-3.8-flash-medium for 2-3x faster coding).'),
       effort: z.enum(['low', 'medium', 'high', 'off']).optional().describe('Reasoning effort (low, medium, high, off).'),
       directory: z.string().optional().describe('Working directory context for agy (default: current directory).'),
+      timeoutMinutes: z.number().optional().default(10).describe('Maximum timeout in minutes before terminating process (default: 10).'),
+      autoCompile: z.boolean().optional().default(true).describe('Automatically verify project compilation after agy finishes (default: true).'),
     },
-    async ({ prompt, model, effort, directory }) => {
+    async ({ prompt, model, effort, directory, timeoutMinutes, autoCompile }) => {
       try {
         const result = await DuoBridge.executeViaAgy({
           prompt,
           model,
           effort,
           directory,
+          timeoutMinutes,
+          autoCompile,
         });
 
         const statusText = result.exitCode === 0 ? 'Success' : `Exit Code ${result.exitCode}`;
+        const compileSec = result.compileOutput ? `\n\n#### 🛠️ Auto-Compile Verification:\n\`\`\`text\n${result.compileOutput}\n\`\`\`` : '';
 
         return {
           content: [
             {
               type: 'text',
-              text: `### Antigravity (agy) Response [${statusText} | Model: \`${model || 'gemini-3.8-flash-medium'}\`]\n\n${result.output}`,
+              text: `### Antigravity (agy) Response [${statusText} | Model: \`${model || 'gemini-3.8-flash-medium'}\`]\n\n${result.output}${compileSec}`,
             },
           ],
         };
@@ -600,6 +605,86 @@ export function createDuoMcpServer(): McpServer {
               text: `Failed to delegate task to agy CLI: ${err.message || String(err)}\n\nPlease ensure ~/.gemini/bin/agy is installed and accessible.`,
             },
           ],
+        };
+      }
+    }
+  );
+
+  // 14. duo_diff_summary
+  server.tool(
+    'duo_diff_summary',
+    'TÓM TẮT THAY ĐỔI MÃ NGUỒN (Git Diff Summary). Tự động phân tích git status & diff ngắn gọn theo từng file (+thêm/-bớt), giúp Claude nắm bắt nhanh mã vừa sửa mà không cần đọc hàng trăm dòng diff.',
+    {
+      directory: z.string().optional().describe('Target repository directory path (default: current directory).'),
+    },
+    async ({ directory }) => {
+      try {
+        const diff = await DuoBridge.getDiffSummary(directory);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `### 📊 Tóm Tắt Thay Đổi Mã Nguồn (Git Diff Summary)\n\n- **Số file tác động**: ${diff.filesChanged}\n- **Dòng thêm (+)**: \`+${diff.insertions}\` | **Dòng bớt (-)**: \`-${diff.deletions}\`\n\n#### Chi tiết từng file:\n${diff.summary}`,
+            },
+          ],
+        };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Lỗi đọc git diff summary: ${err.message || String(err)}` }],
+        };
+      }
+    }
+  );
+
+  // 15. duo_undo_step
+  server.tool(
+    'duo_undo_step',
+    'HOÀN TÁC TỪNG BƯỚC RIÊNG BIỆT (Step-Level Undo). Revert các file của một bước con cụ thể mà không làm mất code của các bước khác.',
+    {
+      stepId: z.number().optional().describe('ID của bước cần hoàn tác (ví dụ 1, 2, 3). Nếu không truyền sẽ rollback về checkpoint gần nhất.'),
+      directory: z.string().optional().describe('Target project directory path (default: current directory).'),
+    },
+    async ({ stepId, directory }) => {
+      try {
+        const res = await DuoBridge.undoStep({ stepId, directory });
+        return {
+          content: [{ type: 'text', text: res.message }],
+        };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Hoàn tác bước thất bại: ${err.message || String(err)}` }],
+        };
+      }
+    }
+  );
+
+  // 16. duo_sync_note
+  server.tool(
+    'duo_sync_note',
+    'ĐỒNG BỘ CHECKLIST VÀO NOTE (Sync Markdown Checklist). Tự động đánh dấu tick [x] vào file PLAN.md hoặc note khi một bước nghiệp vụ hoàn thành.',
+    {
+      stepKeyword: z.string().describe('Từ khóa nhận diện bước trong file note (ví dụ "BE1", "FE2", "migration").'),
+      completed: z.boolean().optional().default(true).describe('Đánh dấu hoàn thành [x] (true) hay mở lại [ ] (false).'),
+      notePath: z.string().optional().describe('Đường dẫn file note/PLAN.md (mặc định: tự động tìm).'),
+      directory: z.string().optional().describe('Target project directory (default: current directory).'),
+    },
+    async ({ stepKeyword, completed, notePath, directory }) => {
+      try {
+        const res = await DuoBridge.syncNoteChecklist({
+          stepKeyword,
+          completed: completed ?? true,
+          notePath,
+          directory,
+        });
+        return {
+          content: [{ type: 'text', text: res.message }],
+        };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Lỗi đồng bộ checklist note: ${err.message || String(err)}` }],
         };
       }
     }

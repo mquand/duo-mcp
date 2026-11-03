@@ -662,15 +662,17 @@ export class DuoBridge {
     model?: string;
     effort?: 'low' | 'medium' | 'high' | 'off';
     directory?: string;
-  }): Promise<{ output: string; exitCode: number }> {
+    timeoutMinutes?: number;
+    autoCompile?: boolean;
+  }): Promise<{ output: string; exitCode: number; compileOutput?: string }> {
     const agyPath = path.join(os.homedir(), '.gemini', 'bin', 'agy');
     const bin = fs.existsSync(agyPath) ? agyPath : 'agy';
     const cwd = params.directory ? path.resolve(params.directory) : process.cwd();
 
+    // Default to gemini-3.8-flash-medium for optimal speed (2-3x faster than high)
     let targetModel = params.model || 'gemini-3.8-flash-medium';
 
     // If targetModel is a Gemini model and user specified effort, map to the correct model name
-    // (e.g. model="gemini-3.8-flash" or "gemini-3.8-flash-medium" + effort="low" => "gemini-3.8-flash-low")
     if (params.effort && params.effort !== 'off' && targetModel.startsWith('gemini')) {
       if (params.effort === 'low') {
         targetModel = 'gemini-3.8-flash-low';
@@ -682,8 +684,6 @@ export class DuoBridge {
     }
 
     const args = ['--model', targetModel, '--dangerously-skip-permissions', '-p', params.prompt];
-    // NOTE: agy CLI models (gemini-3.8-flash-*, claude-*, gpt-oss-*) conflict or do not support --effort
-    // We only pass --effort if the model does not already encode effort in its name and is not claude-*
     const modelEncodesEffort = targetModel.endsWith('-low') || targetModel.endsWith('-medium') || targetModel.endsWith('-high');
     const isClaudeModel = targetModel.startsWith('claude');
     if (params.effort && params.effort !== 'off' && !modelEncodesEffort && !isClaudeModel) {
@@ -695,6 +695,8 @@ export class DuoBridge {
     const startTime = new Date().toLocaleTimeString();
     await fs.writeFile(liveLogPath, `[${startTime}] Starting task via agy (${targetModel}) in ${cwd}...\n`);
 
+    const timeoutMs = (params.timeoutMinutes && params.timeoutMinutes > 0 ? params.timeoutMinutes : 10) * 60 * 1000;
+
     return new Promise((resolve, reject) => {
       const child = spawn(bin, args, {
         cwd,
@@ -703,6 +705,17 @@ export class DuoBridge {
 
       let stdout = '';
       let stderr = '';
+      let timer: NodeJS.Timeout | null = null;
+
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          try {
+            child.kill('SIGTERM');
+          } catch {}
+          const timeoutMsg = `\n[TIMEOUT] Task exceeded maximum timeout of ${params.timeoutMinutes || 10} minutes and was terminated.`;
+          fs.appendFile(liveLogPath, timeoutMsg).catch(() => {});
+        }, timeoutMs);
+      }
 
       child.stdout.on('data', (d) => {
         const text = d.toString('utf-8');
@@ -715,20 +728,170 @@ export class DuoBridge {
         fs.appendFile(liveLogPath, `[STDERR] ${text}`).catch(() => {});
       });
 
-      child.on('close', (code) => {
+      child.on('close', async (code) => {
+        if (timer) clearTimeout(timer);
         const endTime = new Date().toLocaleTimeString();
         fs.appendFile(liveLogPath, `\n[${endTime}] Completed with code ${code}.\n`).catch(() => {});
-        const fullOutput = stripVTControlCharacters((stdout + (stderr ? '\n[STDERR]\n' + stderr : '')).trim());
+        
+        let fullOutput = stripVTControlCharacters((stdout + (stderr ? '\n[STDERR]\n' + stderr : '')).trim());
+
+        // Smart Output Truncation: Prevent bloating Claude context if output > 25,000 chars
+        const MAX_CHARS = 25000;
+        if (fullOutput.length > MAX_CHARS) {
+          const head = fullOutput.slice(0, 10000);
+          const tail = fullOutput.slice(-12000);
+          fullOutput = `${head}\n\n... [TRUNCATED ${fullOutput.length - 22000} CHARS TO PROTECT CONTEXT WINDOW] ...\n\n${tail}`;
+        }
+
+        // Auto-Compile Guard: If enabled or in elixir/node repo, auto verify compilation
+        let compileOutput: string | undefined;
+        if (params.autoCompile !== false) {
+          try {
+            if (fs.existsSync(path.join(cwd, 'mix.exs'))) {
+              compileOutput = execSync('mix compile 2>&1 | tail -25', { cwd, encoding: 'utf-8' }).trim();
+            } else if (fs.existsSync(path.join(cwd, 'package.json'))) {
+              const pkg = await fs.readJson(path.join(cwd, 'package.json')).catch(() => ({}));
+              if (pkg.scripts?.build) {
+                compileOutput = execSync('npm run build 2>&1 | tail -25', { cwd, encoding: 'utf-8' }).trim();
+              }
+            }
+          } catch (compileErr: any) {
+            compileOutput = `[COMPILE ERROR]: ${compileErr.stdout || compileErr.message || String(compileErr)}`;
+          }
+        }
+
         resolve({
           output: fullOutput,
           exitCode: code ?? 0,
+          compileOutput,
         });
       });
 
       child.on('error', (err) => {
+        if (timer) clearTimeout(timer);
         reject(err);
       });
     });
+  }
+
+  /**
+   * Summarize current Git diff cleanly by module/files
+   */
+  static async getDiffSummary(targetDir?: string): Promise<{
+    filesChanged: number;
+    insertions: number;
+    deletions: number;
+    summary: string;
+    details: Array<{ file: string; status: string; additions: number; deletions: number }>;
+  }> {
+    const cwd = targetDir ? path.resolve(targetDir) : process.cwd();
+    try {
+      const numstat = execSync('git diff --numstat', { cwd, encoding: 'utf-8' }).trim();
+      const statusShort = execSync('git status --short', { cwd, encoding: 'utf-8' }).trim();
+
+      const details: Array<{ file: string; status: string; additions: number; deletions: number }> = [];
+      let totalAdd = 0;
+      let totalDel = 0;
+
+      if (numstat) {
+        for (const line of numstat.split('\n')) {
+          const parts = line.split('\t');
+          if (parts.length >= 3) {
+            const add = parseInt(parts[0], 10) || 0;
+            const del = parseInt(parts[1], 10) || 0;
+            const file = parts[2];
+            totalAdd += add;
+            totalDel += del;
+            details.push({ file, status: 'M', additions: add, deletions: del });
+          }
+        }
+      }
+
+      // Check untracked files
+      if (statusShort) {
+        for (const line of statusShort.split('\n')) {
+          if (line.startsWith('??')) {
+            const file = line.slice(3).trim();
+            if (!details.find((d) => d.file === file)) {
+              details.push({ file, status: 'A', additions: 0, deletions: 0 });
+            }
+          }
+        }
+      }
+
+      const summaryLines = details.map(
+        (d) => `• [${d.status}] \`${d.file}\` (+${d.additions}/-${d.deletions})`
+      );
+
+      return {
+        filesChanged: details.length,
+        insertions: totalAdd,
+        deletions: totalDel,
+        summary: summaryLines.join('\n') || 'Không có thay đổi nào trong working tree.',
+        details,
+      };
+    } catch (e: any) {
+      return {
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        summary: `Không thể đọc git diff: ${e.message}`,
+        details: [],
+      };
+    }
+  }
+
+  /**
+   * Undo/revert a specific step in the plan or rollback latest changes
+   */
+  static async undoStep(params: {
+    stepId?: number;
+    directory?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    const cwd = params.directory ? path.resolve(params.directory) : process.cwd();
+    const plan = await HandoffManager.getPlan(cwd);
+
+    if (params.stepId && plan) {
+      const step = plan.steps.find((s) => s.id === params.stepId);
+      if (step && step.files && step.files.length > 0) {
+        try {
+          for (const f of step.files) {
+            const fullPath = path.join(cwd, f);
+            if (fs.existsSync(fullPath)) {
+              try {
+                execSync(`git checkout -- "${f}"`, { cwd, stdio: 'ignore' });
+              } catch {
+                // If untracked file, remove it
+                await fs.remove(fullPath);
+              }
+            }
+          }
+          await HandoffManager.updateStepStatus({
+            stepId: step.id,
+            status: 'pending',
+            note: 'Reverted via duo_undo_step',
+            directory: cwd,
+          });
+          return {
+            success: true,
+            message: `Đã hoàn tác thành công Bước ${params.stepId} (${step.title}) và reset các file: ${step.files.join(', ')}.`,
+          };
+        } catch (e: any) {
+          return { success: false, message: `Lỗi khi hoàn tác bước ${params.stepId}: ${e.message}` };
+        }
+      }
+    }
+
+    return await this.rollback(cwd);
+  }
+
+  static async syncNoteChecklist(params: {
+    notePath?: string;
+    stepKeyword?: string;
+    completed?: boolean;
+    directory?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    return await HandoffManager.syncNoteChecklist(params);
   }
 
   private static async fallbackSwitchConfigModel(params: any) {

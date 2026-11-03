@@ -229,4 +229,49 @@ export class HandoffManager {
 
     return header.join('\n');
   }
+
+  /**
+   * Sync and tick checkbox in markdown note file (PLAN.md)
+   */
+  static async syncNoteChecklist(params: {
+    notePath?: string;
+    stepKeyword?: string;
+    completed?: boolean;
+    directory?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    const cwd = params.directory ? path.resolve(params.directory) : process.cwd();
+    let noteFile = params.notePath;
+
+    if (!noteFile) {
+      const candidates = [
+        path.join(cwd, 'PLAN.md'),
+        ...((await fs.pathExists(path.join(cwd, 'note')))
+          ? (await fs.readdir(path.join(cwd, 'note')))
+              .filter((d) => fs.existsSync(path.join(cwd, 'note', d, 'PLAN.md')))
+              .map((d) => path.join(cwd, 'note', d, 'PLAN.md'))
+          : []),
+      ];
+      noteFile = candidates.find((p) => fs.existsSync(p));
+    }
+
+    if (!noteFile || !fs.existsSync(noteFile)) {
+      return { success: false, message: 'Không tìm thấy file note checklist (PLAN.md).' };
+    }
+
+    try {
+      let content = await fs.readFile(noteFile, 'utf-8');
+      if (params.stepKeyword) {
+        const regex = new RegExp(`(-\\s*\\[[\\s\\bxX]?\\]\\s*.*${params.stepKeyword}.*)`, 'i');
+        const mark = params.completed !== false ? '- [x]' : '- [ ]';
+        content = content.replace(regex, (match) => {
+          return match.replace(/^-\s*\[[\s\bxX]?\]/, mark);
+        });
+        await fs.writeFile(noteFile, content, 'utf-8');
+        return { success: true, message: `Đã cập nhật checklist trong ${path.relative(cwd, noteFile)} cho '${params.stepKeyword}'.` };
+      }
+      return { success: true, message: `Tìm thấy file note tại ${noteFile}.` };
+    } catch (e: any) {
+      return { success: false, message: `Lỗi cập nhật note: ${e.message}` };
+    }
+  }
 }
