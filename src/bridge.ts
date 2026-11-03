@@ -149,8 +149,15 @@ export class DuoBridge {
     this.loadDuoEnv();
     if (explicitKey) return true;
     if (provider === 'openai-compatible') return true; // Local Ollama
+    
+    // Check if agy CLI is present on machine
+    const hasAgyCli = fs.existsSync(path.join(os.homedir(), '.gemini', 'bin', 'agy'));
+    if (hasAgyCli && (provider === 'google' || provider === 'anthropic')) {
+      return true;
+    }
+
     if (provider === 'anthropic') return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY);
-    if (provider === 'google') return !!process.env.GEMINI_API_KEY;
+    if (provider === 'google') return !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
     if (provider === 'openai') return !!process.env.OPENAI_API_KEY;
     if (provider === 'deepseek') return !!process.env.DEEPSEEK_API_KEY;
     return false;
@@ -179,9 +186,9 @@ export class DuoBridge {
       const audHasKey = this.checkKeyForProvider(config.roles.auditor.provider, config.roles.auditor.apiKey);
 
       const missing: string[] = [];
-      if (!archHasKey) missing.push(`Architect (${config.roles.architect.provider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env cho duo_orchestrate)`);
-      if (!bldHasKey) missing.push(`Builder (${config.roles.builder.provider}: thiếu GEMINI_API_KEY trong ~/.duo/.env cho duo_orchestrate)`);
-      if (!audHasKey) missing.push(`Auditor (${config.roles.auditor.provider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env cho duo_orchestrate)`);
+      if (!archHasKey) missing.push(`Architect (${config.roles.architect.provider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env hoặc agy CLI cho duo_orchestrate)`);
+      if (!bldHasKey) missing.push(`Builder (${config.roles.builder.provider}: thiếu GEMINI_API_KEY trong ~/.duo/.env hoặc agy CLI cho duo_orchestrate)`);
+      if (!audHasKey) missing.push(`Auditor (${config.roles.auditor.provider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env hoặc agy CLI cho duo_orchestrate)`);
 
       return {
         roles: {
@@ -595,9 +602,9 @@ export class DuoBridge {
     const audHasKey = this.checkKeyForProvider(audProvider, config?.roles?.auditor?.apiKey);
 
     const missing: string[] = [];
-    if (!archHasKey) missing.push(`Architect (${archProvider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env cho duo_orchestrate)`);
-    if (!bldHasKey) missing.push(`Builder (${bldProvider}: thiếu GEMINI_API_KEY trong ~/.duo/.env cho duo_orchestrate)`);
-    if (!audHasKey) missing.push(`Auditor (${audProvider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env cho duo_orchestrate)`);
+    if (!archHasKey) missing.push(`Architect (${archProvider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env hoặc agy CLI cho duo_orchestrate)`);
+    if (!bldHasKey) missing.push(`Builder (${bldProvider}: thiếu GEMINI_API_KEY trong ~/.duo/.env hoặc agy CLI cho duo_orchestrate)`);
+    if (!audHasKey) missing.push(`Auditor (${audProvider}: thiếu ANTHROPIC_API_KEY trong ~/.duo/.env hoặc agy CLI cho duo_orchestrate)`);
 
     return {
       roles: {
@@ -624,6 +631,52 @@ export class DuoBridge {
       language: config?.language || 'vi',
       theme: config?.theme || 'cyber',
     };
+  }
+
+  static async executeViaAgy(params: {
+    prompt: string;
+    model?: string;
+    effort?: 'low' | 'medium' | 'high' | 'off';
+    directory?: string;
+  }): Promise<{ output: string; exitCode: number }> {
+    const agyPath = path.join(os.homedir(), '.gemini', 'bin', 'agy');
+    const bin = fs.existsSync(agyPath) ? agyPath : 'agy';
+    const cwd = params.directory ? path.resolve(params.directory) : process.cwd();
+
+    const targetModel = params.model || 'gemini-3.8-flash-medium';
+    const args = ['--model', targetModel, '--dangerously-skip-permissions', '-p', params.prompt];
+    if (params.effort && params.effort !== 'off') {
+      args.push('--effort', params.effort);
+    }
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(bin, args, {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (d) => {
+        stdout += d.toString('utf-8');
+      });
+      child.stderr.on('data', (d) => {
+        stderr += d.toString('utf-8');
+      });
+
+      child.on('close', (code) => {
+        const fullOutput = stripVTControlCharacters((stdout + (stderr ? '\n[STDERR]\n' + stderr : '')).trim());
+        resolve({
+          output: fullOutput,
+          exitCode: code ?? 0,
+        });
+      });
+
+      child.on('error', (err) => {
+        reject(err);
+      });
+    });
   }
 
   private static async fallbackSwitchConfigModel(params: any) {

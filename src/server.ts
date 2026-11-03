@@ -553,6 +553,60 @@ export function createDuoMcpServer(): McpServer {
     }
   );
 
+  // 13. duo_agy_delegate
+  server.tool(
+    'duo_agy_delegate',
+    'ỦY QUYỀN TRỰC TIẾP CHO AGY CLI (Google Gemini / Claude không cần API Key). Dành cho Claude Extension hoặc Agent cần: đọc context lớn, phân tích repo sâu, review chéo giải pháp, hoặc tra cứu web thông qua Antigravity CLI (agy) cài sẵn trên máy.',
+    {
+      prompt: z.string().describe('Instructions or questions to delegate to agy CLI (e.g. review plan, analyze large files, summarize logs).'),
+      model: z
+        .enum([
+          'gemini-3.8-flash-high',
+          'gemini-3.8-flash-medium',
+          'gemini-3.8-flash-low',
+          'claude-sonnet-4-6',
+          'claude-opus-4-6-thinking',
+          'gpt-oss-120b-medium',
+        ])
+        .optional()
+        .default('gemini-3.8-flash-medium')
+        .describe('Model to execute in agy CLI (default: gemini-3.8-flash-medium).'),
+      effort: z.enum(['low', 'medium', 'high', 'off']).optional().describe('Reasoning effort (low, medium, high, off).'),
+      directory: z.string().optional().describe('Working directory context for agy (default: current directory).'),
+    },
+    async ({ prompt, model, effort, directory }) => {
+      try {
+        const result = await DuoBridge.executeViaAgy({
+          prompt,
+          model,
+          effort,
+          directory,
+        });
+
+        const statusText = result.exitCode === 0 ? 'Success' : `Exit Code ${result.exitCode}`;
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `### Antigravity (agy) Response [${statusText} | Model: \`${model || 'gemini-3.8-flash-medium'}\`]\n\n${result.output}`,
+            },
+          ],
+        };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Failed to delegate task to agy CLI: ${err.message || String(err)}\n\nPlease ensure ~/.gemini/bin/agy is installed and accessible.`,
+            },
+          ],
+        };
+      }
+    }
+  );
+
   return server;
 }
 
