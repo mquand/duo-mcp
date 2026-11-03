@@ -145,9 +145,10 @@ test('DuoBridge - inspectAndGuard performs all-in-one survey and checkpoint', as
   assert.ok(res.checkpointRef);
 });
 
-test('DuoMcpServer - registers duo_agy_delegate tool', () => {
+test('DuoMcpServer - registers all 6 streamlined tools', () => {
   const server = createDuoMcpServer();
   assert.ok(server);
+  assert.equal(typeof server.tool, 'function');
 });
 
 

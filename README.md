@@ -1,149 +1,76 @@
-# Duo-MCP Server
+# Duo-MCP Server v2.0 (Streamlined Architecture)
 
-Model Context Protocol (MCP) Server for [**Duo-Agent**](https://github.com/mquand/Duo-Agent).
-
-Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent orchestrator (Architect -> Builder -> Auditor) and rapid CodeGraph engine to **Claude Code** and **Antigravity CLI (`agy`)**.
+Model Context Protocol (MCP) Server kết nối **Claude Code** (Lead Orchestrator) với **Antigravity CLI (`agy`)** (High-speed Worker).
 
 > [!NOTE]
-> Hệ thống được thiết kế tối ưu tập trung hoàn toàn vào workflow: **Claude Code (CLI / Desktop)** đóng vai trò Orchestrator/Planner chính, và **Antigravity CLI (`agy`)** đóng vai trò Worker ủy quyền phần cứng/context lớn mà không cần extension trung gian.
+> Phiên bản v2.0 đã được **tinh gọn tối đa từ 18 tools xuống còn 6 tools tinh nhuệ nhất**. Thiết kế này giúp tiết kiệm ~70% dung lượng System Prompt (tiết kiệm hàng ngàn tokens mỗi lượt chat), loại bỏ hoàn toàn hiện tượng gọi nhầm tool (tool hallucination) và tập trung 100% vào tốc độ thực thi thực tế.
 
 ---
 
-## 1. Tính năng & Tools Cung Cấp
+## 1. Danh Sách 6 Tools Tinh Nhuệ (Core Tools)
 
-| Tool Name | Mô tả | Tham số |
-| :--- | :--- | :--- |
-| `duo_parallel_delegate` | **[Đa Luồng & Hàng Đợi An Toàn]** Điều phối nhiều subtask đồng thời: Nếu khác repo (ví dụ Backend & Frontend) -> chạy song song (Parallel) tăng tốc 2-3x; Nếu CÙNG REPO hoặc TRÙNG FILE -> tự động đưa vào HÀNG ĐỢI (Queue) tuần tự an toàn, tránh conflict git. | `tasks` (mảng gồm: `name`, `prompt`, `directory`, `targetFiles`, `model`, `effort`, `timeoutMinutes`, `autoCompile`) |
-| `duo_queue_status` | **[Kiểm Tra Hàng Đợi]** Giám sát trạng thái thời gian thực của các luồng AI đang chạy nền, các luồng đang đợi trong Queue và file log tương ứng. | (Không) |
-| `duo_agy_delegate` | **[Không cần API Key]** Ủy quyền trực tiếp cho Antigravity CLI (`agy`) trên máy: Tận dụng Gemini/Claude có sẵn để phân tích codebase nặng, đọc context lớn, tóm tắt log, tra cứu web hoặc review chéo giải pháp. Tự động stream log ra `~/.duo/live.log`, kiểm tra compile lỗi và cắt tỉa output. | `prompt` (bắt buộc), `model`, `effort`, `directory`, `autoCompile`, `timeoutMinutes` |
-| `duo_inspect_repo` | **[Tất cả trong 1]** Khảo sát & Bảo vệ mã nguồn: Tự động quét khung CodeGraph AST (<10ms), nhận diện Stack/Lệnh test/Quy ước, và tạo Git Safety Checkpoint bảo vệ code chỉ trong 1 lệnh duy nhất. | `directory`, `maxFiles`, `checkpoint` (mặc định: true) |
-| `duo_execute_plan` | **[Tất cả trong 1]** Kích hoạt thực thi kế hoạch: Tự động tạo Git Checkpoint an toàn, nhận diện stack/test, nạp plan, chuyển bước sang `IN_PROGRESS` và trả về toàn bộ chỉ dẫn cho Claude code ngay. | `directory`, `stepId`, `autoCheckpoint` (mặc định: true) |
-| `duo_diff_summary` | **[Tóm Tắt Thay Đổi]** Xem nhanh thống kê file vừa sửa (+thêm/-bớt dòng) thay vì đọc hàng trăm dòng raw diff. | `directory` |
-| `duo_undo_step` | **[Hoàn Tác Từng Bước]** Revert code của một bước con cụ thể mà không làm mất code các bước khác. | `stepId`, `directory` |
-| `duo_sync_note` | **[Đồng Bộ Note]** Tự động đánh dấu tickbox `[x]` vào file PLAN.md hoặc note khi bước hoàn thành. | `stepKeyword`, `completed`, `notePath`, `directory` |
-| `duo_handoff_plan` | Lập bản kế hoạch chi tiết lưu vào file `PLAN.md` và `.duo/handoff.json` để chia tách và theo dõi từng bước. | `title` (bắt buộc), `task`, `summary`, `steps`, `conventions`, `directory`, `planner`, `executor` |
-| `duo_get_handoff_plan` | Lấy toàn bộ kế hoạch, danh sách file cần sửa và hướng dẫn từng bước để thực thi. | `directory` |
-| `duo_update_handoff_status` | Cập nhật tiến độ của từng bước (`in_progress`, `completed`, `failed`). Tự động đánh dấu tickbox trong file `PLAN.md`. | `stepId` (bắt buộc), `status` (bắt buộc), `note`, `directory` |
-| `duo_orchestrate` | Chạy toàn bộ quy trình đa tác tử tự động (Architect ➔ Builder ➔ Auditor). Hỗ trợ chọn nhanh preset hoặc ghi đè model theo task. | `task` (bắt buộc), `directory`, `autoAccept`, `effort`, `preset`, `model`, `architectModel`, `builderModel`, `auditorModel` |
-| `duo_switch_model` | Đổi mô hình AI hoặc Preset mặc định (lưu vĩnh viễn vào `~/.duo/config.json`) trực tiếp từ chat mà không cần mở terminal. | `preset`, `model`, `architect`, `builder`, `auditor`, `effort` |
-| `duo_codegraph` | Quét khung AST cấu trúc project (<10ms), trả về cây symbols classes/functions, lọc nhiễu. | `directory`, `maxFiles` |
-| `duo_git_checkpoint` | Tạo checkpoint an toàn trước khi chỉnh sửa file. | `directory` |
-| `duo_git_rollback` | Hoàn tác thay đổi về checkpoint gần nhất (`/undo`). | `directory` |
-| `duo_detect_stack` | Nhận diện ngôn ngữ, framework, quy ước `.duorules` và lệnh test của dự án. | `directory` |
-| `duo_status` | Kiểm tra model đang cấu hình, trạng thái API key và readiness của các vai trò. | (Không) |
+| # | Tool Name | Phân Loại | Chức Năng Chính | Tham Số |
+| :-: | :--- | :--- | :--- | :--- |
+| **1** | `duo_delegate` | **Thực thi (Đơn / Đa luồng)** | **[Không cần API Key]** Chạy đơn hoặc chạy nhiều subtasks qua `agy` CLI (Gemini 3.8 / Claude). Tự động chạy **song song** khi khác repo (tăng tốc 2-3x), tự động xếp **hàng đợi (Queue)** khi cùng repo hoặc trùng file. Tự động stream log, kiểm tra compile lỗi và cắt tỉa output. | `prompt` (task đơn), `tasks` (mảng task đa luồng), `directory`, `targetFiles`, `model`, `effort`, `timeoutMinutes`, `autoCompile` |
+| **2** | `duo_inspect` | **Khảo sát & Bảo vệ** | **[All-in-One]** Quét khung cấu trúc AST CodeGraph (<10ms), nhận diện công nghệ (Stack/Framework/Quy ước/Lệnh test), và tự động tạo Git Safety Checkpoint bảo vệ code trước khi sửa. | `directory`, `maxFiles`, `checkpoint` |
+| **3** | `duo_diff` | **Kiểm tra Thay đổi** | Tóm tắt thay đổi code ngắn gọn (+thêm/-bớt dòng theo từng file) sau khi AI sửa xong, giúp Claude nắm bắt ngay mà không cần đọc hàng ngàn dòng raw diff. | `directory` |
+| **4** | `duo_rollback` | **Quay xe An toàn** | Khôi phục mã nguồn về checkpoint an toàn gần nhất khi AI gặp lỗi hoặc sinh code không mong muốn. Hỗ trợ rollback toàn bộ hoặc hoàn tác riêng từng bước (`stepId`). | `stepId`, `directory` |
+| **5** | `duo_queue` | **Giám sát Tiến trình** | Theo dõi trực quan các tiến trình AI đang chạy nền trong từng repo, danh sách các task đang chờ trong hàng đợi (lý do chờ), và file log stream trực tiếp. | (Không) |
+| **6** | `duo_plan` | **Quản lý Kế hoạch** | Hợp nhất toàn bộ thao tác kế hoạch trong `PLAN.md`: Bắt đầu bước tiếp theo (`execute`), tạo plan mới (`create`), cập nhật trạng thái bước (`update`), đọc plan (`get`), hoặc đồng bộ checklist note (`sync_note`). | `action`, `stepId`, `status`, `note`, `title`, `task`, `summary`, `steps`, `stepKeyword`, `completed`, `directory` |
 
 ---
 
-## 2. Quy trình Phối hợp Claude Code ➔ Antigravity CLI (`agy`)
+## 2. Quy trình Phối hợp Chuẩn (Workflow)
 
 ```text
-┌────────────────────────────────┐
-│          CLAUDE CODE           │  (Orchestrator & Coder chính)
-└───────────────┬────────────────┘
-                │
-                │ 1. duo_inspect_repo / duo_handoff_plan / duo_execute_plan
-                ▼
-         [ DUO-MCP SERVER ]
-                │
-                │ 2. duo_agy_delegate (khi cần context lớn / review chéo / web)
-                ▼
-┌────────────────────────────────┐
-│     ANTIGRAVITY CLI (`agy`)    │  (Chạy ngầm trên máy: Gemini 3.8 / Claude)
-└────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│               CLAUDE CODE                │  (Lead Architect & Code Reviewer)
+└────────────────────┬─────────────────────┘
+                     │
+       1. duo_inspect ➔ Khảo sát AST + Checkpoint bảo vệ
+       2. duo_delegate ➔ Chạy song song (BE + FE) hoặc hàng đợi
+       3. duo_diff ➔ Xem tóm tắt thay đổi (+/- dòng)
+       4. duo_rollback ➔ (Nếu cần) Quay xe an toàn
+                     │
+                     ▼
+┌──────────────────────────────────────────┐
+│         ANTIGRAVITY CLI (`agy`)          │  (Headless Worker: Gemini 3.8 / Claude)
+└──────────────────────────────────────────┘
 ```
-
-* **Lập kế hoạch & Thực thi**: Claude trực tiếp dùng `duo_handoff_plan` và `duo_execute_plan` để điều khiển tiến độ theo từng bước trong `PLAN.md`.
-* **Xử lý tác vụ nặng**: Khi gặp log lớn, grep repo sâu, hoặc cần review chéo, Claude gọi `duo_agy_delegate` để Antigravity CLI xử lý hộ mà không tốn token.
 
 ---
 
-## 3. Cài Đặt & Cấu Hình
+## 3. Các Lệnh Tắt Slash Commands (Claude Code CLI)
 
-### Thêm vào cấu hình Claude MCP
+Các lệnh shortcut được cấu hình sẵn trong `~/.claude/commands/`:
 
-Mở file cấu hình Claude MCP (`~/.claude.json`):
+| Slash Command | Hành Động |
+| :--- | :--- |
+| `/duo-parallel` | Chạy nhiều subtask cùng lúc (Song song nếu khác repo, Hàng đợi nếu cùng repo/file). |
+| `/duo-queue` | Xem trạng thái các luồng AI đang chạy và các task đang chờ trong hàng đợi. |
+| `/duo-inspect` | Khảo sát AST CodeGraph, nhận diện framework/rules và tạo Checkpoint an toàn. |
+| `/duo-execute-plan` | Tự động Checkpoint, nạp kế hoạch `PLAN.md` và bắt đầu bước tiếp theo. |
+| `/duo-diff` | Xem tóm tắt thay đổi code ngắn gọn (+/-) theo từng file. |
+| `/duo-undo` | Hoàn tác an toàn về checkpoint khi gặp lỗi. |
+| `/duo-status` | Giám sát tiến trình đang chạy và hàng đợi hệ thống. |
 
-```json
-{
-  "mcpServers": {
-    "duo-mcp": {
-      "type": "stdio",
-      "command": "node",
-      "args": [
-        "/Users/macbook/.duo/server/dist/index.js"
-      ]
-    }
-  }
-}
-```
+---
 
-Hoặc thêm nhanh bằng lệnh:
+## 4. Theo Dõi Tiến Độ Thực Tế (Real-time Monitoring)
+
+Khi `duo_delegate` đang chạy ngầm, bạn có thể mở một terminal riêng để theo dõi:
+
 ```bash
-claude mcp add -s user duo-mcp -- node /Users/macbook/.duo/server/dist/index.js
+# Xem trực tiếp log stream từ Antigravity
+tail -f ~/.duo/live.log
+
+# Hoặc theo dõi tóm tắt tiến trình và file thay đổi
+~/.duo/watch_agy.sh
 ```
 
 ---
 
-## 4. Cách Sử Dụng Trong Khung Chat
-
-Khi đã bật MCP, bạn có thể ra lệnh trực tiếp trong Claude / Antigravity:
-
-* **Điều phối Đa Luồng & Hàng Đợi Tự Động (Parallel & Smart Queue)**:
-  Khi một tính năng chạm nhiều repo (Backend & Frontend), bạn có thể giao đồng thời nhiều task. Hệ thống sẽ tự động chạy song song nếu khác repo, và tự động xếp hàng đợi nếu cùng repo hoặc trùng file:
-  > *"Dùng duo_parallel_delegate để chạy đồng thời 2 task: 1 task tạo migration ở Backend, 1 task làm UI ở Frontend."*
-  >
-  > *"Gõ /duo-queue để xem tiến độ các luồng đang chạy và các luồng đang xếp hàng đợi."*
-
-* **Các lệnh Slash Commands tích hợp sẵn cho Claude Code**:
-  | Slash Command | Hành Động |
-  | :--- | :--- |
-  | `/duo-parallel` | Thực thi nhiều subtask đồng thời (Song song nếu khác repo, Hàng đợi nếu cùng repo/file). |
-  | `/duo-queue` | Kiểm tra trạng thái các luồng AI đang chạy và các luồng đang chờ trong hàng đợi. |
-  | `/duo-execute-plan` | Tự động tạo Checkpoint, nhận diện stack/test, nạp kế hoạch và bắt đầu code. |
-  | `/duo-inspect` | Khảo sát AST CodeGraph, nhận diện framework/rules và tạo Checkpoint an toàn. |
-  | `/duo-diff` | Xem tóm tắt thay đổi code ngắn gọn (+/-) theo từng file. |
-  | `/duo-undo` | Hoàn tác thay đổi an toàn về checkpoint. |
-  | `/duo-status` | Kiểm tra cấu hình và mô hình AI hiện tại. |
-
-* **Ủy quyền cho Antigravity CLI (`agy`) xử lý context lớn hoặc review chéo (Không cần API key)**:
-  > *"Dùng tool duo_agy_delegate để đọc file log lớn và tóm tắt các lỗi gần nhất."*
-  >
-  > *"Dùng duo_agy_delegate với model 'claude-opus-4-6-thinking' để review chéo kiến trúc và tìm edge cases trong code vừa viết."*
-  >
-  > *"Dùng duo_agy_delegate với model 'gemini-3.8-flash-medium' để thực thi nhanh task này."*
-
-* **Theo dõi tiến độ thực tế theo thời gian thực (Real-time Live Monitoring)**:
-  Khi `duo_agy_delegate` đang chạy ngầm, bạn có thể mở một terminal riêng để theo dõi từng bước đọc/sửa file và kết quả:
-  ```bash
-  # Xem trực tiếp log stream từ Antigravity
-  tail -f ~/.duo/live.log
-
-  # Hoặc xem tóm tắt bước chạy và trạng thái file thay đổi
-  ~/.duo/watch_agy.sh
-  ```
-
-* **Chạy task phức tạp bằng đa tác tử**:
-  > *"Dùng tool duo_orchestrate để bổ sung tính năng xuất file dữ liệu cho module đơn hàng."*
-
-* **Chạy task với Preset hoặc Model cụ thể (chỉ áp dụng cho task này)**:
-  > *"Dùng duo_orchestrate với preset 'offline' để sửa bug này hoàn toàn miễn phí bằng Ollama."*
-  >
-  > *"Dùng duo_orchestrate với model 'claude-opus-5-5' để thiết kế và triển khai module thanh toán."*
-
-* **Đổi vĩnh viễn mô hình cấu hình của Duo Agent từ chat**:
-  > *"Gọi tool duo_switch_model để chuyển sang preset 'claude_pure'."*
-  >
-  > *"Gọi duo_switch_model với builder='gemini-3.8-flash' để tăng tốc độ sinh code."*
-
-* **Phân tích nhanh cấu trúc dự án**:
-  > *"Hãy gọi duo_codegraph để xem tổng quan kiến trúc của dự án trước khi lập kế hoạch."*
-
-* **Bảo vệ an toàn mã nguồn**:
-  > *"Tạo git checkpoint bằng duo_git_checkpoint trước khi bắt đầu sửa code."*
-
----
-
-## 5. Phát Triển & Kiểm Thử
+## 5. Cài Đặt & Kiểm Thử
 
 ```bash
 # Cài đặt dependencies
@@ -152,13 +79,6 @@ npm install
 # Biên dịch TypeScript
 npm run build
 
-# Chạy unit tests
+# Chạy toàn bộ 14 unit tests
 npm test
 ```
-
----
-
-## 6. Liên Kết Liên Quan
-
-* **Core Engine**: [Duo-Agent Repository](https://github.com/mquand/Duo-Agent) - Autonomous multi-agent orchestrator & rapid CodeGraph CLI engine.
-

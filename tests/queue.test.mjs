@@ -64,7 +64,7 @@ test('DuoExecutionQueue - detects conflicts for same file target', () => {
   assert.match(resSameFile.reason, /Cùng sửa file|Cùng repo/);
 });
 
-test('DuoMcpServer - registers duo_parallel_delegate and duo_queue_status', () => {
+test('DuoMcpServer - registers duo_delegate and duo_queue', () => {
   const server = createDuoMcpServer();
   assert.ok(server);
   assert.equal(typeof server.tool, 'function');
