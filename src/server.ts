@@ -690,6 +690,140 @@ export function createDuoMcpServer(): McpServer {
     }
   );
 
+  // 17. duo_parallel_delegate
+  server.tool(
+    'duo_parallel_delegate',
+    'THỰC THI NHIỀU NHÁNH / SONG SONG CÓ HÀNG ĐỢI AN TOÀN (Parallel Execution with Queue). Cho phép Claude chạy nhiều subtask đồng thời: Nếu khác repo -> chạy song song (parallel) tăng tốc gấp 2-3 lần; Nếu CÙNG REPO hoặc TRÙNG FILE -> tự động đưa vào HÀNG ĐỢI (Queue) tuần tự an toàn tuyệt đối, tránh conflict git và đè code.',
+    {
+      tasks: z
+        .array(
+          z.object({
+            name: z.string().describe('Tên phân luồng task (ví dụ: "BE Migration", "FE Modal").'),
+            prompt: z.string().describe('Chỉ dẫn thực thi cho agy CLI.'),
+            directory: z.string().optional().describe('Thư mục repository dự án mục tiêu (mặc định: cwd).'),
+            targetFiles: z.array(z.string()).optional().describe('Danh sách file tác động (nếu trùng file hoặc cùng repo sẽ tự động xếp hàng đợi tuần tự).'),
+            model: z
+              .enum([
+                'gemini-3.8-flash-high',
+                'gemini-3.8-flash-medium',
+                'gemini-3.8-flash-low',
+                'claude-sonnet-4-6',
+                'claude-opus-4-6-thinking',
+                'gpt-oss-120b-medium',
+              ])
+              .optional()
+              .default('gemini-3.8-flash-medium')
+              .describe('Model to execute in agy CLI (default: gemini-3.8-flash-medium).'),
+            effort: z.enum(['low', 'medium', 'high', 'off']).optional().describe('Reasoning effort (low, medium, high, off).'),
+            timeoutMinutes: z.number().optional().default(10).describe('Timeout per task in minutes (default: 10).'),
+            autoCompile: z.boolean().optional().default(true).describe('Verify compilation after task finishes (default: true).'),
+          })
+        )
+        .describe('Danh sách các tasks cần điều phối thực thi.'),
+    },
+    async ({ tasks }) => {
+      try {
+        if (!tasks || tasks.length === 0) {
+          return {
+            content: [{ type: 'text', text: '⚠️ Danh sách tasks rỗng. Vui lòng cung cấp ít nhất 1 task.' }],
+          };
+        }
+
+        const results = await DuoBridge.executeParallel(tasks);
+
+        const parallelCount = results.filter((r) => r.concurrencyMode === 'parallel').length;
+        const queuedCount = results.filter((r) => r.concurrencyMode === 'queued').length;
+        const successCount = results.filter((r) => r.status === 'completed').length;
+
+        const tableHeader = [
+          `| Task | Chế Độ | File Tác Động | Thời Gian | Trạng Thái |`,
+          `| :--- | :--- | :--- | :--- | :--- |`,
+        ];
+
+        const tableRows = results.map((r) => {
+          const modeIcon = r.concurrencyMode === 'parallel' ? '🚀 Song song' : '⏳ Hàng đợi';
+          const statusIcon = r.status === 'completed' ? '✅ Hoàn tất' : '❌ Lỗi';
+          const durationStr = `${Math.round(r.durationMs / 1000)}s`;
+          const filesStr = r.targetFiles.length > 0 ? r.targetFiles.map((f) => `\`${f}\``).join(', ') : '(Toàn repo)';
+          return `| **${r.name}** | ${modeIcon} | ${filesStr} | ${durationStr} | ${statusIcon} |`;
+        });
+
+        const detailSections = results.map((r) => {
+          const queueNotice = r.concurrencyMode === 'queued'
+            ? `> ⚠️ **Đã xếp hàng đợi**: ${r.queueReason} (Thời gian chờ trong queue: ${Math.round(r.waitedInQueueMs / 1000)}s)\n\n`
+            : '';
+          const compileSec = r.compileOutput ? `\n\n**🛠️ Auto-Compile:**\n\`\`\`text\n${r.compileOutput}\n\`\`\`` : '';
+          return `### 🔹 [${r.name}] (Thư mục: \`${r.directory}\`)\n${queueNotice}- **Mã thoát**: \`${r.exitCode}\` | **Log stream**: \`${r.logFile}\`\n\n\`\`\`text\n${r.output}\n\`\`\`${compileSec}`;
+        }).join('\n\n---\n\n');
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `## ⚡ Báo Cáo Điều Phối Thực Thi Đa Luồng (Parallel & Queue Engine)\n\n` +
+                `- **Tổng số task**: ${results.length} (✅ Thành công: ${successCount}/${results.length})\n` +
+                `- **Luồng chạy song song (Parallel)**: ${parallelCount} tasks (khác repo/độc lập)\n` +
+                `- **Luồng qua hàng đợi an toàn (Queued)**: ${queuedCount} tasks (cùng repo hoặc trùng file)\n\n` +
+                `${tableHeader.join('\n')}\n${tableRows.join('\n')}\n\n---\n\n${detailSections}`,
+            },
+          ],
+        };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Điều phối thực thi song song thất bại: ${err.message || String(err)}` }],
+        };
+      }
+    }
+  );
+
+  // 18. duo_queue_status
+  server.tool(
+    'duo_queue_status',
+    'KIỂM TRA HÀNG ĐỢI VÀ TIẾN TRÌNH ĐANG CHẠY (Task Queue Status). Xem ngay các luồng AI đang chạy song song, các luồng đang xếp hàng đợi (do cùng repo hoặc trùng file), và đường dẫn log trực tiếp.',
+    {},
+    async () => {
+      try {
+        const status = await DuoBridge.getQueueStatus();
+
+        const activeSec = status.activeTasks.length > 0
+          ? status.activeTasks.map((t) => {
+              const runSec = Math.round((Date.now() - t.startedAt) / 1000);
+              const filesStr = t.targetFiles.length > 0 ? `\n  - Files: ${t.targetFiles.join(', ')}` : '';
+              return `- 🚀 **${t.name}** (\`${t.id}\`) - Đang chạy được ${runSec}s trong \`${t.directory}\`${filesStr}\n  - Log: \`${t.logFile}\``;
+            }).join('\n')
+          : '*(Không có tác vụ nào đang chạy nền)*';
+
+        const queueSec = status.queuedTasks.length > 0
+          ? status.queuedTasks.map((t) => {
+              const waitSec = Math.round((Date.now() - t.enqueuedAt) / 1000);
+              const filesStr = t.targetFiles.length > 0 ? ` | Files: ${t.targetFiles.join(', ')}` : '';
+              return `- ⏳ **${t.name}** (\`${t.id}\`) - Chờ ${waitSec}s trong \`${t.directory}\`${filesStr}\n  - **Lý do đợi**: ${t.queueReason}`;
+            }).join('\n')
+          : '*(Hàng đợi đang trống, sẵn sàng nhận task mới)*';
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `### 🚦 Trạng Thái Hàng Đợi & Tiến Trình AI (Duo Queue Status)\n\n` +
+                `- **Đang chạy đồng thời**: ${status.activeCount} tasks\n` +
+                `- **Đang xếp hàng đợi**: ${status.queuedCount} tasks\n\n` +
+                `#### 🏃 Đang Thực Thi:\n${activeSec}\n\n` +
+                `#### ⏱️ Đang Chờ Trong Hàng Đợi (Queue):\n${queueSec}\n\n` +
+                `> 💡 *Quy tắc hàng đợi:* Tasks khác repo sẽ chạy song song. Tasks cùng repo hoặc trùng file sẽ tự động xếp hàng đợi tuần tự để tránh conflict git và đè code.`,
+            },
+          ],
+        };
+      } catch (err: any) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Lỗi kiểm tra hàng đợi: ${err.message || String(err)}` }],
+        };
+      }
+    }
+  );
+
   return server;
 }
 

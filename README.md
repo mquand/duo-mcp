@@ -13,9 +13,14 @@ Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent
 
 | Tool Name | Mô tả | Tham số |
 | :--- | :--- | :--- |
-| `duo_agy_delegate` | **[Không cần API Key]** Ủy quyền trực tiếp cho Antigravity CLI (`agy`) trên máy: Tận dụng Gemini/Claude có sẵn để phân tích codebase nặng, đọc context lớn, tóm tắt log, tra cứu web hoặc review chéo giải pháp. | `prompt` (bắt buộc), `model`, `effort`, `directory` |
+| `duo_parallel_delegate` | **[Đa Luồng & Hàng Đợi An Toàn]** Điều phối nhiều subtask đồng thời: Nếu khác repo (ví dụ Backend & Frontend) -> chạy song song (Parallel) tăng tốc 2-3x; Nếu CÙNG REPO hoặc TRÙNG FILE -> tự động đưa vào HÀNG ĐỢI (Queue) tuần tự an toàn, tránh conflict git. | `tasks` (mảng gồm: `name`, `prompt`, `directory`, `targetFiles`, `model`, `effort`, `timeoutMinutes`, `autoCompile`) |
+| `duo_queue_status` | **[Kiểm Tra Hàng Đợi]** Giám sát trạng thái thời gian thực của các luồng AI đang chạy nền, các luồng đang đợi trong Queue và file log tương ứng. | (Không) |
+| `duo_agy_delegate` | **[Không cần API Key]** Ủy quyền trực tiếp cho Antigravity CLI (`agy`) trên máy: Tận dụng Gemini/Claude có sẵn để phân tích codebase nặng, đọc context lớn, tóm tắt log, tra cứu web hoặc review chéo giải pháp. Tự động stream log ra `~/.duo/live.log`, kiểm tra compile lỗi và cắt tỉa output. | `prompt` (bắt buộc), `model`, `effort`, `directory`, `autoCompile`, `timeoutMinutes` |
 | `duo_inspect_repo` | **[Tất cả trong 1]** Khảo sát & Bảo vệ mã nguồn: Tự động quét khung CodeGraph AST (<10ms), nhận diện Stack/Lệnh test/Quy ước, và tạo Git Safety Checkpoint bảo vệ code chỉ trong 1 lệnh duy nhất. | `directory`, `maxFiles`, `checkpoint` (mặc định: true) |
 | `duo_execute_plan` | **[Tất cả trong 1]** Kích hoạt thực thi kế hoạch: Tự động tạo Git Checkpoint an toàn, nhận diện stack/test, nạp plan, chuyển bước sang `IN_PROGRESS` và trả về toàn bộ chỉ dẫn cho Claude code ngay. | `directory`, `stepId`, `autoCheckpoint` (mặc định: true) |
+| `duo_diff_summary` | **[Tóm Tắt Thay Đổi]** Xem nhanh thống kê file vừa sửa (+thêm/-bớt dòng) thay vì đọc hàng trăm dòng raw diff. | `directory` |
+| `duo_undo_step` | **[Hoàn Tác Từng Bước]** Revert code của một bước con cụ thể mà không làm mất code các bước khác. | `stepId`, `directory` |
+| `duo_sync_note` | **[Đồng Bộ Note]** Tự động đánh dấu tickbox `[x]` vào file PLAN.md hoặc note khi bước hoàn thành. | `stepKeyword`, `completed`, `notePath`, `directory` |
 | `duo_handoff_plan` | Lập bản kế hoạch chi tiết lưu vào file `PLAN.md` và `.duo/handoff.json` để chia tách và theo dõi từng bước. | `title` (bắt buộc), `task`, `summary`, `steps`, `conventions`, `directory`, `planner`, `executor` |
 | `duo_get_handoff_plan` | Lấy toàn bộ kế hoạch, danh sách file cần sửa và hướng dẫn từng bước để thực thi. | `directory` |
 | `duo_update_handoff_status` | Cập nhật tiến độ của từng bước (`in_progress`, `completed`, `failed`). Tự động đánh dấu tickbox trong file `PLAN.md`. | `stepId` (bắt buộc), `status` (bắt buộc), `note`, `directory` |
@@ -82,6 +87,23 @@ claude mcp add -s user duo-mcp -- node /Users/macbook/.duo/server/dist/index.js
 ## 4. Cách Sử Dụng Trong Khung Chat
 
 Khi đã bật MCP, bạn có thể ra lệnh trực tiếp trong Claude / Antigravity:
+
+* **Điều phối Đa Luồng & Hàng Đợi Tự Động (Parallel & Smart Queue)**:
+  Khi một tính năng chạm nhiều repo (Backend & Frontend), bạn có thể giao đồng thời nhiều task. Hệ thống sẽ tự động chạy song song nếu khác repo, và tự động xếp hàng đợi nếu cùng repo hoặc trùng file:
+  > *"Dùng duo_parallel_delegate để chạy đồng thời 2 task: 1 task tạo migration ở Backend, 1 task làm UI ở Frontend."*
+  >
+  > *"Gõ /duo-queue để xem tiến độ các luồng đang chạy và các luồng đang xếp hàng đợi."*
+
+* **Các lệnh Slash Commands tích hợp sẵn cho Claude Code**:
+  | Slash Command | Hành Động |
+  | :--- | :--- |
+  | `/duo-parallel` | Thực thi nhiều subtask đồng thời (Song song nếu khác repo, Hàng đợi nếu cùng repo/file). |
+  | `/duo-queue` | Kiểm tra trạng thái các luồng AI đang chạy và các luồng đang chờ trong hàng đợi. |
+  | `/duo-execute-plan` | Tự động tạo Checkpoint, nhận diện stack/test, nạp kế hoạch và bắt đầu code. |
+  | `/duo-inspect` | Khảo sát AST CodeGraph, nhận diện framework/rules và tạo Checkpoint an toàn. |
+  | `/duo-diff` | Xem tóm tắt thay đổi code ngắn gọn (+/-) theo từng file. |
+  | `/duo-undo` | Hoàn tác thay đổi an toàn về checkpoint. |
+  | `/duo-status` | Kiểm tra cấu hình và mô hình AI hiện tại. |
 
 * **Ủy quyền cho Antigravity CLI (`agy`) xử lý context lớn hoặc review chéo (Không cần API key)**:
   > *"Dùng tool duo_agy_delegate để đọc file log lớn và tóm tắt các lỗi gần nhất."*

@@ -664,6 +664,7 @@ export class DuoBridge {
     directory?: string;
     timeoutMinutes?: number;
     autoCompile?: boolean;
+    customLogFile?: string;
   }): Promise<{ output: string; exitCode: number; compileOutput?: string }> {
     const agyPath = path.join(os.homedir(), '.gemini', 'bin', 'agy');
     const bin = fs.existsSync(agyPath) ? agyPath : 'agy';
@@ -695,6 +696,18 @@ export class DuoBridge {
     const startTime = new Date().toLocaleTimeString();
     await fs.writeFile(liveLogPath, `[${startTime}] Starting task via agy (${targetModel}) in ${cwd}...\n`);
 
+    if (params.customLogFile) {
+      await fs.ensureDir(path.dirname(params.customLogFile));
+      await fs.writeFile(params.customLogFile, `[${startTime}] Starting task via agy (${targetModel}) in ${cwd}...\n`).catch(() => {});
+    }
+
+    const appendLog = (text: string) => {
+      fs.appendFile(liveLogPath, text).catch(() => {});
+      if (params.customLogFile && params.customLogFile !== liveLogPath) {
+        fs.appendFile(params.customLogFile, text).catch(() => {});
+      }
+    };
+
     const timeoutMs = (params.timeoutMinutes && params.timeoutMinutes > 0 ? params.timeoutMinutes : 10) * 60 * 1000;
 
     return new Promise((resolve, reject) => {
@@ -713,25 +726,25 @@ export class DuoBridge {
             child.kill('SIGTERM');
           } catch {}
           const timeoutMsg = `\n[TIMEOUT] Task exceeded maximum timeout of ${params.timeoutMinutes || 10} minutes and was terminated.`;
-          fs.appendFile(liveLogPath, timeoutMsg).catch(() => {});
+          appendLog(timeoutMsg);
         }, timeoutMs);
       }
 
       child.stdout.on('data', (d) => {
         const text = d.toString('utf-8');
         stdout += text;
-        fs.appendFile(liveLogPath, text).catch(() => {});
+        appendLog(text);
       });
       child.stderr.on('data', (d) => {
         const text = d.toString('utf-8');
         stderr += text;
-        fs.appendFile(liveLogPath, `[STDERR] ${text}`).catch(() => {});
+        appendLog(`[STDERR] ${text}`);
       });
 
       child.on('close', async (code) => {
         if (timer) clearTimeout(timer);
         const endTime = new Date().toLocaleTimeString();
-        fs.appendFile(liveLogPath, `\n[${endTime}] Completed with code ${code}.\n`).catch(() => {});
+        appendLog(`\n[${endTime}] Completed with code ${code}.\n`);
         
         let fullOutput = stripVTControlCharacters((stdout + (stderr ? '\n[STDERR]\n' + stderr : '')).trim());
 
@@ -938,5 +951,31 @@ export class DuoBridge {
       message: 'Model configuration updated in ~/.duo/config.json',
       configStatus: status,
     };
+  }
+
+  /**
+   * Execute multiple tasks concurrently with automatic repo and file conflict queuing
+   */
+  static async executeParallel(tasks: Array<{
+    id?: string;
+    name?: string;
+    prompt: string;
+    directory?: string;
+    targetFiles?: string[];
+    model?: string;
+    effort?: 'low' | 'medium' | 'high' | 'off';
+    timeoutMinutes?: number;
+    autoCompile?: boolean;
+  }>) {
+    const { globalDuoQueue } = await import('./queue.js');
+    return globalDuoQueue.executeBatch(tasks);
+  }
+
+  /**
+   * Inspect current execution queue and parallel workers
+   */
+  static async getQueueStatus() {
+    const { globalDuoQueue } = await import('./queue.js');
+    return globalDuoQueue.getStatus();
   }
 }
