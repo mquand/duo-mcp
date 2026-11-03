@@ -526,7 +526,18 @@ export class DuoBridge {
     let ruleContent: string | undefined;
 
     const pkgPath = path.join(cwd, 'package.json');
-    if (fs.existsSync(pkgPath)) {
+    const mixPath = path.join(cwd, 'mix.exs');
+    const pomPath = path.join(cwd, 'pom.xml');
+    const goPath = path.join(cwd, 'go.mod');
+    const cargoPath = path.join(cwd, 'Cargo.toml');
+    const pyprojectPath = path.join(cwd, 'pyproject.toml');
+    const reqPath = path.join(cwd, 'requirements.txt');
+
+    if (fs.existsSync(mixPath)) {
+      type = 'elixir';
+      language = 'elixir';
+      testCommand = 'mix test';
+    } else if (fs.existsSync(pkgPath)) {
       type = 'nodejs';
       language = fs.existsSync(path.join(cwd, 'tsconfig.json')) ? 'typescript' : 'javascript';
       try {
@@ -537,21 +548,34 @@ export class DuoBridge {
       } catch {
         // ignore
       }
-    } else if (fs.existsSync(path.join(cwd, 'pom.xml'))) {
+    } else if (fs.existsSync(pyprojectPath) || fs.existsSync(reqPath)) {
+      type = 'python';
+      language = 'python';
+      testCommand = 'pytest';
+    } else if (fs.existsSync(pomPath)) {
       type = 'java-maven';
       language = 'java';
       testCommand = 'mvn test';
-    } else if (fs.existsSync(path.join(cwd, 'go.mod'))) {
+    } else if (fs.existsSync(goPath)) {
       type = 'golang';
       language = 'go';
       testCommand = 'go test ./...';
-    } else if (fs.existsSync(path.join(cwd, 'Cargo.toml'))) {
+    } else if (fs.existsSync(cargoPath)) {
       type = 'rust';
       language = 'rust';
       testCommand = 'cargo test';
     }
 
-    const checkRules = ['.duorules', 'CLAUDE.md', 'AGENT.md', '.agents/rules.md'];
+    const checkRules = [
+      '.duorules',
+      'CLAUDE.md',
+      'AGENTS.md',
+      'AGENT.md',
+      '.cursorrules',
+      '.windsurfrules',
+      '.github/copilot-instructions.md',
+      '.agents/rules.md'
+    ];
     for (const r of checkRules) {
       const full = path.join(cwd, r);
       if (fs.existsSync(full)) {
@@ -643,9 +667,26 @@ export class DuoBridge {
     const bin = fs.existsSync(agyPath) ? agyPath : 'agy';
     const cwd = params.directory ? path.resolve(params.directory) : process.cwd();
 
-    const targetModel = params.model || 'gemini-3.8-flash-medium';
+    let targetModel = params.model || 'gemini-3.8-flash-medium';
+
+    // If targetModel is a Gemini model and user specified effort, map to the correct model name
+    // (e.g. model="gemini-3.8-flash" or "gemini-3.8-flash-medium" + effort="low" => "gemini-3.8-flash-low")
+    if (params.effort && params.effort !== 'off' && targetModel.startsWith('gemini')) {
+      if (params.effort === 'low') {
+        targetModel = 'gemini-3.8-flash-low';
+      } else if (params.effort === 'high') {
+        targetModel = 'gemini-3.8-flash-high';
+      } else if (params.effort === 'medium') {
+        targetModel = 'gemini-3.8-flash-medium';
+      }
+    }
+
     const args = ['--model', targetModel, '--dangerously-skip-permissions', '-p', params.prompt];
-    if (params.effort && params.effort !== 'off') {
+    // NOTE: agy CLI models (gemini-3.8-flash-*, claude-*, gpt-oss-*) conflict or do not support --effort
+    // We only pass --effort if the model does not already encode effort in its name and is not claude-*
+    const modelEncodesEffort = targetModel.endsWith('-low') || targetModel.endsWith('-medium') || targetModel.endsWith('-high');
+    const isClaudeModel = targetModel.startsWith('claude');
+    if (params.effort && params.effort !== 'off' && !modelEncodesEffort && !isClaudeModel) {
       args.push('--effort', params.effort);
     }
 
