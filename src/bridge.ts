@@ -690,6 +690,11 @@ export class DuoBridge {
       args.push('--effort', params.effort);
     }
 
+    const liveLogPath = path.join(os.homedir(), '.duo', 'live.log');
+    await fs.ensureDir(path.dirname(liveLogPath));
+    const startTime = new Date().toLocaleTimeString();
+    await fs.writeFile(liveLogPath, `[${startTime}] Starting task via agy (${targetModel}) in ${cwd}...\n`);
+
     return new Promise((resolve, reject) => {
       const child = spawn(bin, args, {
         cwd,
@@ -700,13 +705,19 @@ export class DuoBridge {
       let stderr = '';
 
       child.stdout.on('data', (d) => {
-        stdout += d.toString('utf-8');
+        const text = d.toString('utf-8');
+        stdout += text;
+        fs.appendFile(liveLogPath, text).catch(() => {});
       });
       child.stderr.on('data', (d) => {
-        stderr += d.toString('utf-8');
+        const text = d.toString('utf-8');
+        stderr += text;
+        fs.appendFile(liveLogPath, `[STDERR] ${text}`).catch(() => {});
       });
 
       child.on('close', (code) => {
+        const endTime = new Date().toLocaleTimeString();
+        fs.appendFile(liveLogPath, `\n[${endTime}] Completed with code ${code}.\n`).catch(() => {});
         const fullOutput = stripVTControlCharacters((stdout + (stderr ? '\n[STDERR]\n' + stderr : '')).trim());
         resolve({
           output: fullOutput,
