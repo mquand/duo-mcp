@@ -118,12 +118,24 @@ Trong Antigravity, thêm cấu hình vào file `.agents/mcp_config.json` (ở wo
 Khi đã bật MCP, bạn có thể ra lệnh trực tiếp trong Claude / Antigravity:
 
 * **Ủy quyền cho Antigravity CLI (`agy`) xử lý context lớn hoặc review chéo (Không cần API key)**:
-  > *"Dùng tool duo_agy_delegate để đọc file log lớn và tóm tắt các lỗi xuất hàng gần nhất."*
+  > *"Dùng tool duo_agy_delegate để đọc file log lớn và tóm tắt các lỗi gần nhất."*
   >
   > *"Dùng duo_agy_delegate với model 'claude-opus-4-6-thinking' để review chéo kiến trúc và tìm edge cases trong code vừa viết."*
+  >
+  > *"Dùng duo_agy_delegate với model 'gemini-3.8-flash-medium' để thực thi nhanh task này."*
+
+* **Theo dõi tiến độ thực tế theo thời gian thực (Real-time Live Monitoring)**:
+  Khi `duo_agy_delegate` đang chạy ngầm, bạn có thể mở một terminal riêng để theo dõi từng bước đọc/sửa file và kết quả:
+  ```bash
+  # Xem trực tiếp log stream từ Antigravity
+  tail -f ~/.duo/live.log
+
+  # Hoặc xem tóm tắt bước chạy và trạng thái file thay đổi
+  ~/.duo/watch_agy.sh
+  ```
 
 * **Chạy task phức tạp bằng đa tác tử**:
-  > *"Dùng tool duo_orchestrate để bổ sung tính năng xuất file Excel cho đơn hàng trong thư mục hiện tại."*
+  > *"Dùng tool duo_orchestrate để bổ sung tính năng xuất file dữ liệu cho module đơn hàng."*
 
 * **Chạy task với Preset hoặc Model cụ thể (chỉ áp dụng cho task này)**:
   > *"Dùng duo_orchestrate với preset 'offline' để sửa bug này hoàn toàn miễn phí bằng Ollama."*
