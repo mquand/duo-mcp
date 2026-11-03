@@ -2,10 +2,10 @@
 
 Model Context Protocol (MCP) Server for [**Duo-Agent**](https://github.com/mquand/Duo-Agent).
 
-Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent orchestrator (Architect -> Builder -> Auditor) and rapid CodeGraph engine to **Claude Desktop**, **Claude Code**, **Claude Extension (VS Code / Cursor / Windsurf)**, and **Antigravity**.
+Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent orchestrator (Architect -> Builder -> Auditor) and rapid CodeGraph engine to **Claude Code** and **Antigravity CLI (`agy`)**.
 
 > [!NOTE]
-> Dự án này đóng vai trò MCP Server kết nối với CLI [**Duo-Agent**](https://github.com/mquand/Duo-Agent). Người dùng thích dòng lệnh vẫn sử dụng `duo-agent` qua terminal bình thường, trong khi `duo-mcp` phục vụ các IDE / Extension cần giao tiếp qua chuẩn MCP.
+> Hệ thống được thiết kế tối ưu tập trung hoàn toàn vào workflow: **Claude Code (CLI / Desktop)** đóng vai trò Orchestrator/Planner chính, và **Antigravity CLI (`agy`)** đóng vai trò Worker ủy quyền phần cứng/context lớn mà không cần extension trung gian.
 
 ---
 
@@ -13,11 +13,11 @@ Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent
 
 | Tool Name | Mô tả | Tham số |
 | :--- | :--- | :--- |
-| `duo_agy_delegate` | **[Mới - Không cần API Key]** Ủy quyền trực tiếp cho Antigravity CLI (`agy`) trên máy: Tận dụng Gemini/Claude có sẵn để phân tích codebase nặng, đọc context lớn, tóm tắt log, tra cứu web hoặc review chéo giải pháp. | `prompt` (bắt buộc), `model`, `effort`, `directory` |
+| `duo_agy_delegate` | **[Không cần API Key]** Ủy quyền trực tiếp cho Antigravity CLI (`agy`) trên máy: Tận dụng Gemini/Claude có sẵn để phân tích codebase nặng, đọc context lớn, tóm tắt log, tra cứu web hoặc review chéo giải pháp. | `prompt` (bắt buộc), `model`, `effort`, `directory` |
 | `duo_inspect_repo` | **[Tất cả trong 1]** Khảo sát & Bảo vệ mã nguồn: Tự động quét khung CodeGraph AST (<10ms), nhận diện Stack/Lệnh test/Quy ước, và tạo Git Safety Checkpoint bảo vệ code chỉ trong 1 lệnh duy nhất. | `directory`, `maxFiles`, `checkpoint` (mặc định: true) |
-| `duo_execute_plan` | **[Tất cả trong 1]** Kích hoạt thực thi kế hoạch: Tự động tạo Git Checkpoint an toàn, nhận diện stack/test, nạp plan, chuyển bước sang `IN_PROGRESS` và trả về toàn bộ chỉ dẫn cho Antigravity code ngay. | `directory`, `stepId`, `autoCheckpoint` (mặc định: true) |
-| `duo_handoff_plan` | Claude (Planner) gửi bản kế hoạch chi tiết cho Antigravity (Builder) thực thi. Tự động sinh file `PLAN.md` và `.duo/handoff.json`. | `title` (bắt buộc), `task`, `summary`, `steps` (danh sách bước, files, instruction, verification), `conventions`, `directory`, `planner`, `executor` |
-| `duo_get_handoff_plan` | Antigravity (Builder) lấy toàn bộ kế hoạch, danh sách file cần sửa và hướng dẫn từng bước để thực thi. | `directory` |
+| `duo_execute_plan` | **[Tất cả trong 1]** Kích hoạt thực thi kế hoạch: Tự động tạo Git Checkpoint an toàn, nhận diện stack/test, nạp plan, chuyển bước sang `IN_PROGRESS` và trả về toàn bộ chỉ dẫn cho Claude code ngay. | `directory`, `stepId`, `autoCheckpoint` (mặc định: true) |
+| `duo_handoff_plan` | Lập bản kế hoạch chi tiết lưu vào file `PLAN.md` và `.duo/handoff.json` để chia tách và theo dõi từng bước. | `title` (bắt buộc), `task`, `summary`, `steps`, `conventions`, `directory`, `planner`, `executor` |
+| `duo_get_handoff_plan` | Lấy toàn bộ kế hoạch, danh sách file cần sửa và hướng dẫn từng bước để thực thi. | `directory` |
 | `duo_update_handoff_status` | Cập nhật tiến độ của từng bước (`in_progress`, `completed`, `failed`). Tự động đánh dấu tickbox trong file `PLAN.md`. | `stepId` (bắt buộc), `status` (bắt buộc), `note`, `directory` |
 | `duo_orchestrate` | Chạy toàn bộ quy trình đa tác tử tự động (Architect ➔ Builder ➔ Auditor). Hỗ trợ chọn nhanh preset hoặc ghi đè model theo task. | `task` (bắt buộc), `directory`, `autoAccept`, `effort`, `preset`, `model`, `architectModel`, `builderModel`, `auditorModel` |
 | `duo_switch_model` | Đổi mô hình AI hoặc Preset mặc định (lưu vĩnh viễn vào `~/.duo/config.json`) trực tiếp từ chat mà không cần mở terminal. | `preset`, `model`, `architect`, `builder`, `auditor`, `effort` |
@@ -29,86 +29,52 @@ Expose [Duo-Agent](https://github.com/mquand/Duo-Agent)'s autonomous multi-agent
 
 ---
 
-## 2. Quy trình Phối hợp Claude (Planner) ➔ Antigravity (Executor) trong VS Code
-
-Khi bạn cài đặt đồng thời 2 Extension **Claude** và **Antigravity** trong VS Code:
+## 2. Quy trình Phối hợp Claude Code ➔ Antigravity CLI (`agy`)
 
 ```text
-┌────────────────────────────────┐         ┌────────────────────────────────┐
-│      Extension 1: CLAUDE       │         │    Extension 2: ANTIGRAVITY    │
-│       (Architect/Planner)      │         │        (Builder/Executor)      │
-└───────────────┬────────────────┘         └────────────────┬───────────────┘
-                │                                           ▲
-                │ 1. Gọi duo_handoff_plan                   │ 2. Gọi duo_get_handoff_plan
-                ▼                                           │
-         ┌──────────────────────────────────────────────────┴───────────────┐
-         │                        DUO-MCP SERVER                            │
-         │  - Sinh file PLAN.md trực quan với checklist                      │
-         │  - Lưu trạng thái cấu trúc vào .duo/handoff.json                 │
-         └──────────────────────────────────┬───────────────────────────────┘
-                                            │ 3. Gọi duo_update_handoff_status
-                                            ▼
-                                   [ Codebase + Live PLAN.md ]
+┌────────────────────────────────┐
+│          CLAUDE CODE           │  (Orchestrator & Coder chính)
+└───────────────┬────────────────┘
+                │
+                │ 1. duo_inspect_repo / duo_handoff_plan / duo_execute_plan
+                ▼
+         [ DUO-MCP SERVER ]
+                │
+                │ 2. duo_agy_delegate (khi cần context lớn / review chéo / web)
+                ▼
+┌────────────────────────────────┐
+│     ANTIGRAVITY CLI (`agy`)    │  (Chạy ngầm trên máy: Gemini 3.8 / Claude)
+└────────────────────────────────┘
 ```
 
-### Bước 1: Bên Extension Claude (Lập kế hoạch)
-Bạn giao việc cho Claude:
-> *"Hãy phân tích yêu cầu này, dùng `duo_codegraph` khảo sát codebase và dùng tool `duo_handoff_plan` để lên bản kế hoạch chi tiết cho Antigravity thực thi."*
-
-Claude sẽ gọi `duo_handoff_plan`:
-* Tự động sinh file **`PLAN.md`** ngay trong thư mục project với các task checklist dạng `- [ ] Step 1...`.
-* Ghi nhận đầy đủ: Files cần tác động, hướng dẫn logic cụ thể, lệnh test/verify cho từng bước.
-
-### Bước 2: Bên Extension Antigravity (Thực thi)
-Bạn chỉ cần mở khung chat Antigravity và nhắn:
-> *"Hãy gọi `duo_get_handoff_plan` và lần lượt thực thi các bước trong kế hoạch, sau mỗi bước hãy cập nhật trạng thái bằng `duo_update_handoff_status`."*
-
-Antigravity sẽ:
-1. Đọc plan chi tiết, mở đúng các file cần sửa.
-2. Cập nhật bước sang `in_progress`.
-3. Viết code, chạy lệnh test kiểm tra.
-4. Cập nhật bước sang `completed` ➔ Tickbox `[x]` trong file `PLAN.md` sẽ tự động được đánh dấu!
+* **Lập kế hoạch & Thực thi**: Claude trực tiếp dùng `duo_handoff_plan` và `duo_execute_plan` để điều khiển tiến độ theo từng bước trong `PLAN.md`.
+* **Xử lý tác vụ nặng**: Khi gặp log lớn, grep repo sâu, hoặc cần review chéo, Claude gọi `duo_agy_delegate` để Antigravity CLI xử lý hộ mà không tốn token.
 
 ---
 
 ## 3. Cài Đặt & Cấu Hình
 
-### A. Dành cho Claude Extension / Claude Desktop
+### Thêm vào cấu hình Claude MCP
 
-Mở file cấu hình MCP của Claude:
-* **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-* **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-Thêm cấu hình sau:
+Mở file cấu hình Claude MCP (`~/.claude.json`):
 
 ```json
 {
   "mcpServers": {
     "duo-mcp": {
+      "type": "stdio",
       "command": "node",
       "args": [
-        "/path/to/duo-mcp/dist/index.js"
+        "/Users/macbook/.duo/server/dist/index.js"
       ]
     }
   }
 }
 ```
 
-### B. Dành cho Antigravity
-
-Trong Antigravity, thêm cấu hình vào file `.agents/mcp_config.json` (ở workspace) hoặc `~/.gemini/config/mcp_config.json` (toàn cục):
-
-```json
-{
-  "mcpServers": {
-    "duo-mcp": {
-      "command": "node",
-      "args": [
-        "/path/to/duo-mcp/dist/index.js"
-      ]
-    }
-  }
-}
+Hoặc thêm nhanh bằng lệnh:
+```bash
+claude mcp add -s user duo-mcp -- node /Users/macbook/.duo/server/dist/index.js
 ```
 
 ---

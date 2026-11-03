@@ -12,7 +12,7 @@ export function createDuoMcpServer(): McpServer {
   // 1. duo_orchestrate
   server.tool(
     'duo_orchestrate',
-    'Standalone CLI orchestrator (requires local duo-agent CLI build). NOTE FOR EXTENSIONS: If you are an AI assistant in VS Code (like Claude or Antigravity) coordinating via OAuth/Web login, DO NOT use this tool; use "duo_handoff_plan" to create the plan for Antigravity (Gemini) instead.',
+    'Standalone multi-agent CLI orchestrator (Architect -> Builder -> Auditor). Coordinates planning, AST context slicing, and code modifications via configured models.',
     {
       task: z.string().describe('The task instructions, bug to fix, or feature to build.'),
       directory: z.string().optional().describe('Target project directory path (default: current working directory).'),
@@ -60,9 +60,7 @@ export function createDuoMcpServer(): McpServer {
             {
               type: 'text',
               text: `⚠️ **Duo CLI standalone entrypoint not found.** (${err.message || String(err)})\n\n` +
-                `💡 **Hướng dẫn cho AI (Claude / Antigravity)**:\n` +
-                `Vì bạn đang chạy trong môi trường Extension (dùng OAuth / Web Login), bạn KHÔNG CẦN gọi CLI bên ngoài.\n` +
-                `Hãy dùng tool **\`duo_handoff_plan\`** để trực tiếp lưu kế hoạch chi tiết cho task "${task}" vào file \`PLAN.md\`. Sau đó Antigravity (Gemini) sẽ gọi \`duo_get_handoff_plan\` để thực thi!`,
+                `💡 Bạn có thể dùng tool **\`duo_agy_delegate\`** để ủy quyền tác vụ này trực tiếp cho Antigravity CLI (\`agy\`) trên máy mà không cần cài thêm API key.`,
             },
           ],
         };
@@ -225,8 +223,8 @@ export function createDuoMcpServer(): McpServer {
         ].join('\n');
 
         const missingNotice = status.missingKeys.length > 0
-          ? `\n\n> ⚠️ **Lưu ý về API Key cho tool \`duo_orchestrate\`**:\n> Khi chạy \`duo_orchestrate\`, CLI gọi API cloud độc lập nên cần API key thật trong \`~/.duo/.env\`:\n${status.missingKeys.map((k) => `> • ${k}`).join('\n')}\n>\n> 💡 *Ngược lại, nếu bạn dùng luồng Handoff (\`duo_handoff_plan\` & \`duo_get_handoff_plan\`), bạn **KHÔNG CẦN** API key vì các Extension tự dùng phiên đăng nhập có sẵn.*`
-          : '\n\n**Credentials**: Tất cả API key đã sẵn sàng cho `duo_orchestrate`.';
+          ? `\n\n> ⚠️ **Lưu ý về API Key cho tool \`duo_orchestrate\`**:\n> Khi chạy \`duo_orchestrate\` không qua agy CLI, cần API key trong \`~/.duo/.env\`:\n${status.missingKeys.map((k) => `> • ${k}`).join('\n')}\n>\n> 💡 *Hoặc dùng \`duo_agy_delegate\` để ủy quyền trực tiếp qua Antigravity CLI mà không cần bất kỳ API key nào.*`
+          : '\n\n**Credentials**: Sẵn sàng thực thi (qua API key hoặc agy CLI).';
 
         return {
           content: [
@@ -313,7 +311,7 @@ export function createDuoMcpServer(): McpServer {
   // 8. duo_handoff_plan
   server.tool(
     'duo_handoff_plan',
-    'LẬP KẾ HOẠCH BÀN GIAO (Claude ➔ Antigravity/Gemini). Kích hoạt khi người dùng yêu cầu: "dùng duo-mcp lên plan", "lên plan cho task", "lập kế hoạch chi tiết", "tạo plan". Tự động sinh file PLAN.md và .duo/handoff.json.',
+    'LẬP KẾ HOẠCH BÀN GIAO THỰC THI (Planner ➔ Executor). Kích hoạt khi người dùng yêu cầu: "dùng duo-mcp lên plan", "lên plan cho task", "lập kế hoạch chi tiết", "tạo plan". Tự động sinh file PLAN.md và .duo/handoff.json.',
     {
       title: z.string().describe('Short descriptive title of the task or feature.'),
       task: z.string().describe('Original user request or issue description.'),
@@ -330,8 +328,8 @@ export function createDuoMcpServer(): McpServer {
         .describe('Ordered list of implementation steps.'),
       conventions: z.string().optional().describe('Coding conventions, tech stack rules, or constraints to adhere to.'),
       directory: z.string().optional().describe('Target project directory path (default: current directory).'),
-      planner: z.string().optional().default('claude').describe('Name of the planning agent/extension (default: claude).'),
-      executor: z.string().optional().default('antigravity').describe('Target executor extension (default: antigravity).'),
+      planner: z.string().optional().default('claude').describe('Name of the planning agent (default: claude).'),
+      executor: z.string().optional().default('agy').describe('Target executor (default: agy).'),
     },
     async ({ title, task, summary, steps, conventions, directory, planner, executor }) => {
       try {
@@ -375,7 +373,7 @@ export function createDuoMcpServer(): McpServer {
   // 9. duo_get_handoff_plan
   server.tool(
     'duo_get_handoff_plan',
-    'Retrieve the active architectural execution plan submitted by the Planner (Claude) for Antigravity to execute step-by-step.',
+    'Retrieve the active architectural execution plan submitted by Planner for Executor to run step-by-step.',
     {
       directory: z.string().optional().describe('Target project directory path (default: current directory).'),
     },
@@ -469,7 +467,7 @@ export function createDuoMcpServer(): McpServer {
   // 11. duo_execute_plan (All-in-One: Checkpoint + Stack + Load Plan + Start Step)
   server.tool(
     'duo_execute_plan',
-    'THỰC THI KẾ HOẠCH TẤT CẢ TRONG MỘT (Antigravity/Gemini). Kích hoạt khi người dùng yêu cầu: "dùng duo-mcp thực thi plan", "thực thi plan đã lên", "chấp nhận plan", "bắt đầu thực thi". Tự động tạo Git Checkpoint an toàn, nhận diện stack/test, chuyển bước sang IN_PROGRESS và trả về hướng dẫn chi tiết.',
+    'THỰC THI KẾ HOẠCH TẤT CẢ TRONG MỘT (Claude Code). Kích hoạt khi người dùng yêu cầu: "dùng duo-mcp thực thi plan", "thực thi plan đã lên", "chấp nhận plan", "bắt đầu thực thi", hoặc gõ /duo-execute-plan. Tự động tạo Git Checkpoint an toàn, nhận diện stack/test, chuyển bước sang IN_PROGRESS và trả về hướng dẫn chi tiết.',
     {
       stepId: z.number().optional().describe('Specific step ID to start (defaults to next pending step).'),
       autoCheckpoint: z.boolean().optional().default(true).describe('Automatically create git safety checkpoint before modifying code (default: true).'),
@@ -556,7 +554,7 @@ export function createDuoMcpServer(): McpServer {
   // 13. duo_agy_delegate
   server.tool(
     'duo_agy_delegate',
-    'ỦY QUYỀN TRỰC TIẾP CHO AGY CLI (Google Gemini / Claude không cần API Key). Dành cho Claude Extension hoặc Agent cần: đọc context lớn, phân tích repo sâu, review chéo giải pháp, hoặc tra cứu web thông qua Antigravity CLI (agy) cài sẵn trên máy.',
+    'ỦY QUYỀN TRỰC TIẾP CHO AGY CLI (Google Gemini / Claude không cần API Key). Dành cho Claude Code ủy quyền tác vụ nặng cho Antigravity CLI (agy) cài sẵn trên máy: đọc context lớn, phân tích repo sâu, review chéo giải pháp, hoặc tra cứu web.',
     {
       prompt: z.string().describe('Instructions or questions to delegate to agy CLI (e.g. review plan, analyze large files, summarize logs).'),
       model: z
